@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import './Homepage.css';
 
 const Homepage = () => {
@@ -16,11 +16,15 @@ const Homepage = () => {
   const [strength, setStrength] = useState({ level: '', text: '' });
   const [showSavedPasswords, setShowSavedPasswords] = useState(false);
   const [showAddPassword, setShowAddPassword] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [user, setUser] = useState(null);
 
   // Manual password entry states
   const [manualPassword, setManualPassword] = useState('');
   const [manualAccount, setManualAccount] = useState('');
   const [manualAccountName, setManualAccountName] = useState('');
+
+  const navigate = useNavigate();
 
   // Popular account options
   const accountOptions = [
@@ -45,6 +49,103 @@ const Homepage = () => {
     lowercase: 'abcdefghijklmnopqrstuvwxyz',
     numbers: '0123456789',
     symbols: '!@#$%^&*()_+-=[]{}|;:,.<>?'
+  };
+
+  // Check if user is logged in
+  useEffect(() => {
+    const userData = localStorage.getItem('user');
+    if (userData) {
+      const parsedUser = JSON.parse(userData);
+      setUser(parsedUser);
+      loadSavedPasswords(parsedUser.email);
+    }
+  }, []);
+
+  // Load saved passwords from database
+  const loadSavedPasswords = async (userEmail) => {
+    try {
+      setLoading(true);
+      const response = await fetch(`http://localhost:5000/api/passwords/${userEmail}`);
+      if (response.ok) {
+        const passwords = await response.json();
+        setSavedPasswords(passwords);
+      } else {
+        console.error('Failed to load passwords');
+      }
+    } catch (error) {
+      console.error('Error loading passwords:', error);
+      alert('Failed to load saved passwords. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Save password to database
+  const savePasswordToDatabase = async (passwordData) => {
+    try {
+      setLoading(true);
+      const response = await fetch('http://localhost:5000/api/save-password', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          userEmail: user.email,
+          account: passwordData.account,
+          password: passwordData.password,
+          type: passwordData.type,
+          strength: passwordData.strength,
+          timestamp: passwordData.timestamp
+        })
+      });
+
+      if (response.ok) {
+        // Reload passwords from database
+        await loadSavedPasswords(user.email);
+        return true;
+      } else {
+        const errorData = await response.json();
+        throw new Error(errorData.message || 'Failed to save password');
+      }
+    } catch (error) {
+      console.error('Error saving password:', error);
+      alert('Failed to save password. Please try again.');
+      return false;
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Delete password from database
+  const deletePasswordFromDatabase = async (passwordId) => {
+    try {
+      setLoading(true);
+      const response = await fetch(`http://localhost:5000/api/delete-password/${passwordId}`, {
+        method: 'DELETE'
+      });
+
+      if (response.ok) {
+        // Reload passwords from database
+        await loadSavedPasswords(user.email);
+        return true;
+      } else {
+        throw new Error('Failed to delete password');
+      }
+    } catch (error) {
+      console.error('Error deleting password:', error);
+      alert('Failed to delete password. Please try again.');
+      return false;
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Logout function
+  const handleLogout = () => {
+    localStorage.removeItem('user');
+    setUser(null);
+    setSavedPasswords([]);
+    navigate('/');
   };
 
   // Generate password function
@@ -129,7 +230,12 @@ const Homepage = () => {
     }
   };
 
-  const saveGeneratedPassword = () => {
+  const saveGeneratedPassword = async () => {
+    if (!user) {
+      alert('Please log in to save passwords.');
+      return;
+    }
+
     if (!password) {
       alert('No password to save! Generate a password first.');
       return;
@@ -142,8 +248,7 @@ const Homepage = () => {
       return;
     }
 
-    const newPasswordEntry = {
-      id: Date.now(),
+    const passwordData = {
       account: finalAccountName,
       password: password,
       timestamp: new Date().toLocaleString(),
@@ -151,17 +256,24 @@ const Homepage = () => {
       type: 'Generated'
     };
 
-    setSavedPasswords([...savedPasswords, newPasswordEntry]);
-    alert(`Password saved successfully for ${finalAccountName}!`);
-    
-    // Reset form
-    setSelectedAccount('');
-    setAccountName('');
-    setPassword('');
-    setStrength({ level: '', text: '' });
+    const success = await savePasswordToDatabase(passwordData);
+    if (success) {
+      alert(`Password saved successfully for ${finalAccountName}!`);
+      
+      // Reset form
+      setSelectedAccount('');
+      setAccountName('');
+      setPassword('');
+      setStrength({ level: '', text: '' });
+    }
   };
 
-  const saveManualPassword = () => {
+  const saveManualPassword = async () => {
+    if (!user) {
+      alert('Please log in to save passwords.');
+      return;
+    }
+
     if (!manualPassword) {
       alert('Please enter a password.');
       return;
@@ -175,29 +287,48 @@ const Homepage = () => {
     }
 
     // Calculate strength for manual password
-    updateStrengthIndicator(manualPassword);
+    // Ensure this is updated to use manualPassword, not the global 'password' state
+    const currentManualStrength = (() => {
+      let score = 0;
+      if (manualPassword.length >= 8) score++;
+      if (manualPassword.length >= 12) score++;
+      if (/[a-z]/.test(manualPassword)) score++;
+      if (/[A-Z]/.test(manualPassword)) score++;
+      if (/[0-9]/.test(manualPassword)) score++;
+      if (/[^A-Za-z0-9]/.test(manualPassword)) score++;
+      if (manualPassword.length >= 16) score++;
 
-    const newPasswordEntry = {
-      id: Date.now(),
+      if (score <= 3) return 'Weak Password';
+      else if (score <= 5) return 'Medium Password';
+      else return 'Strong Password';
+    })();
+
+
+    const passwordData = {
       account: finalAccountName,
       password: manualPassword,
       timestamp: new Date().toLocaleString(),
-      strength: strength.text,
+      strength: currentManualStrength, // Use the strength calculated specifically for manualPassword
       type: 'Manual'
     };
 
-    setSavedPasswords([...savedPasswords, newPasswordEntry]);
-    alert(`Password saved successfully for ${finalAccountName}!`);
-    
-    // Reset form
-    setManualAccount('');
-    setManualAccountName('');
-    setManualPassword('');
-    setShowAddPassword(false);
+    const success = await savePasswordToDatabase(passwordData);
+    if (success) {
+      alert(`Password saved successfully for ${finalAccountName}!`);
+      
+      // Reset form
+      setManualAccount('');
+      setManualAccountName('');
+      setManualPassword('');
+      setShowAddPassword(false);
+      setStrength({ level: '', text: '' }); // Reset strength indicator after saving
+    }
   };
 
-  const deletePassword = (id) => {
-    setSavedPasswords(savedPasswords.filter(item => item.id !== id));
+  const deletePassword = async (passwordId) => {
+    if (window.confirm('Are you sure you want to delete this password?')) {
+      await deletePasswordFromDatabase(passwordId);
+    }
   };
 
   const handlePasswordChange = (e) => {
@@ -240,31 +371,54 @@ const Homepage = () => {
 
       {/* Header */}
       <div className="header">
-        <h1>Password Manager</h1>
+        <h1>🔐 SecureVault</h1> {/* Changed name here */}
         <div className="nav-links">
-          <Link to="/login" className="nav-link">Login</Link>
-          <Link to="/signup" className="nav-link">Sign Up</Link>
+          {user ? (
+            <div className="user-info">
+              <span className="welcome-text">Welcome, {user.name}!</span>
+              <button onClick={handleLogout} className="logout-btn">Logout</button>
+            </div>
+          ) : (
+            // Removed Login/Sign Up links from here when not logged in
+            // They will only appear in the centered prompt now
+            null
+          )}
         </div>
       </div>
 
       <div className="main-content">
-        {/* Action Buttons */}
-        <div className="action-buttons">
-          <button 
-            className={`action-tab ${!showAddPassword ? 'active' : ''}`}
-            onClick={() => setShowAddPassword(false)}
-          >
-            🔐 Generate Password
-          </button>
-          <button 
-            className={`action-tab ${showAddPassword ? 'active' : ''}`}
-            onClick={() => setShowAddPassword(true)}
-          >
-            ➕ Add Existing Password
-          </button>
-        </div>
+        {!user && (
+          <div className="login-prompt-wrapper"> {/* New wrapper for centering */}
+            <div className="prompt-box">
+              <h2>🔐 Welcome to SecureVault</h2> {/* Updated title here too */}
+              <p>Please log in or sign up to save and manage your passwords securely.</p>
+              <div className="prompt-buttons">
+                <Link to="/login" className="prompt-btn login-prompt-btn">Login</Link>
+                <Link to="/signup" className="prompt-btn signup-prompt-btn">Sign Up</Link>
+              </div>
+            </div>
+          </div>
+        )}
 
-        {!showAddPassword ? (
+        {/* Action Buttons - only show if user is logged in */}
+        {user && (
+          <div className="action-buttons">
+            <button 
+              className={`action-tab ${!showAddPassword ? 'active' : ''}`}
+              onClick={() => setShowAddPassword(false)}
+            >
+              🔐 Generate Password
+            </button>
+            <button 
+              className={`action-tab ${showAddPassword ? 'active' : ''}`}
+              onClick={() => setShowAddPassword(true)}
+            >
+              ➕ Add Existing Password
+            </button>
+          </div>
+        )}
+
+        {user && !showAddPassword && (
           /* Password Generator Section */
           <div className="generator-section">
             <div className="generator-box">
@@ -378,13 +532,19 @@ const Homepage = () => {
                   />
                 )}
 
-                <button onClick={saveGeneratedPassword} className="save-btn">
-                  💾 Save Generated Password
+                <button 
+                  onClick={saveGeneratedPassword} 
+                  className="save-btn"
+                  disabled={loading}
+                >
+                  {loading ? '⏳ Saving...' : '💾 Save Generated Password'}
                 </button>
               </div>
             </div>
           </div>
-        ) : (
+        )}
+
+        {user && showAddPassword && (
           /* Add Existing Password Section */
           <div className="add-password-section">
             <div className="generator-box">
@@ -440,8 +600,12 @@ const Homepage = () => {
                     />
                   )}
 
-                  <button onClick={saveManualPassword} className="save-btn">
-                    💾 Save Password
+                  <button 
+                    onClick={saveManualPassword} 
+                    className="save-btn"
+                    disabled={loading}
+                  >
+                    {loading ? '⏳ Saving...' : '💾 Save Password'}
                   </button>
                 </div>
               </div>
@@ -449,479 +613,64 @@ const Homepage = () => {
           </div>
         )}
 
-        {/* Saved Passwords Section */}
-        <div className="saved-passwords-section">
-          <button 
-            onClick={() => setShowSavedPasswords(!showSavedPasswords)}
-            className="toggle-saved-btn"
-          >
-            {showSavedPasswords ? '🔼 Hide' : '🔽 Show'} Saved Passwords ({savedPasswords.length})
-          </button>
+        {/* Saved Passwords Section - only show if user is logged in */}
+        {user && (
+          <div className="saved-passwords-section">
+            <button 
+              onClick={() => setShowSavedPasswords(!showSavedPasswords)}
+              className="toggle-saved-btn"
+              disabled={loading}
+            >
+              {loading ? '⏳ Loading...' : 
+                `${showSavedPasswords ? '🔼 Hide' : '🔽 Show'} Saved Passwords (${savedPasswords.length})`
+              }
+            </button>
 
-          {showSavedPasswords && (
-            <div className="saved-passwords">
-              {savedPasswords.length === 0 ? (
-                <p className="no-passwords">No passwords saved yet. Generate or add a password to get started!</p>
-              ) : (
-                <div className="passwords-grid">
-                  {savedPasswords.map(item => (
-                    <div key={item.id} className="password-card">
-                      <div className="card-header">
-                        <h4>{item.account}</h4>
-                        <span className="password-type">{item.type}</span>
+            {showSavedPasswords && (
+              <div className="saved-passwords">
+                {savedPasswords.length === 0 ? (
+                  <p className="no-passwords">No passwords saved yet. Generate or add a password to get started!</p>
+                ) : (
+                  <div className="passwords-grid">
+                    {savedPasswords.map(item => (
+                      <div key={item._id} className="password-card">
+                        <div className="card-header">
+                          <h4>{item.account}</h4>
+                          <span className="password-type">{item.type}</span>
+                        </div>
+                        <div className="password-text">{item.password}</div>
+                        <div className="card-info">
+                          <small>{item.timestamp}</small>
+                          <span className={`strength-badge strength-${item.strength.toLowerCase().split(' ')[0]}`}>
+                            {item.strength}
+                          </span>
+                        </div>
+                        <div className="card-actions">
+                          <button 
+                            onClick={() => copyPassword(item.password)}
+                            className="action-btn copy-action"
+                          >
+                            📋 Copy
+                          </button>
+                          <button 
+                            onClick={() => deletePassword(item._id)}
+                            className="action-btn delete-action"
+                            disabled={loading}
+                          >
+                            {loading ? '⏳' : '🗑️'} Delete
+                          </button>
+                        </div>
                       </div>
-                      <div className="password-text">{item.password}</div>
-                      <div className="card-info">
-                        <small>{item.timestamp}</small>
-                        <span className={`strength-badge strength-${item.strength.toLowerCase().split(' ')[0]}`}>
-                          {item.strength}
-                        </span>
-                      </div>
-                      <div className="card-actions">
-                        <button 
-                          onClick={() => copyPassword(item.password)}
-                          className="action-btn copy-action"
-                        >
-                          📋 Copy
-                        </button>
-                        <button 
-                          onClick={() => deletePassword(item.id)}
-                          className="action-btn delete-action"
-                        >
-                          🗑️ Delete
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-        </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
 };
 
 export default Homepage;
-
-
-// import React, { useState } from 'react';
-// import { Link } from 'react-router-dom';
-
-// const Homepage = () => {
-//   const [password, setPassword] = useState('');
-//   const [criteria, setCriteria] = useState({
-//     uppercase: true,
-//     lowercase: true,
-//     numbers: true,
-//     special: true,
-//     length: 12
-//   });
-//   const [savedPasswords, setSavedPasswords] = useState([]);
-//   const [showSaveSuccess, setShowSaveSuccess] = useState(false);
-//   const [selectedAccount, setSelectedAccount] = useState('');
-//   const [customAccount, setCustomAccount] = useState('');
-//   const [showAccountForm, setShowAccountForm] = useState(false);
-//   const [showSavedPasswords, setShowSavedPasswords] = useState(false);
-//   const [manualPassword, setManualPassword] = useState('');
-//   const [showManualEntry, setShowManualEntry] = useState(false);
-
-//   const predefinedAccounts = [
-//     { name: 'GitHub', icon: '🐙' },
-//     { name: 'Facebook', icon: '📘' },
-//     { name: 'LinkedIn', icon: '💼' },
-//     { name: 'Google', icon: '🔍' },
-//     { name: 'Twitter', icon: '🐦' },
-//     { name: 'Instagram', icon: '📷' },
-//     { name: 'Netflix', icon: '🎬' },
-//     { name: 'Amazon', icon: '📦' },
-//     { name: 'Microsoft', icon: '🪟' },
-//     { name: 'Apple', icon: '🍎' }
-//   ];
-
-//   const generatePassword = () => {
-//     const uppercaseChars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
-//     const lowercaseChars = 'abcdefghijklmnopqrstuvwxyz';
-//     const numberChars = '0123456789';
-//     const specialChars = '!@#$%^&*()_+-=[]{}|;:,.<>?';
-
-//     let availableChars = '';
-//     let guaranteedChars = '';
-
-//     if (criteria.uppercase) {
-//       availableChars += uppercaseChars;
-//       guaranteedChars += uppercaseChars[Math.floor(Math.random() * uppercaseChars.length)];
-//     }
-//     if (criteria.lowercase) {
-//       availableChars += lowercaseChars;
-//       guaranteedChars += lowercaseChars[Math.floor(Math.random() * lowercaseChars.length)];
-//     }
-//     if (criteria.numbers) {
-//       availableChars += numberChars;
-//       guaranteedChars += numberChars[Math.floor(Math.random() * numberChars.length)];
-//     }
-//     if (criteria.special) {
-//       availableChars += specialChars;
-//       guaranteedChars += specialChars[Math.floor(Math.random() * specialChars.length)];
-//     }
-
-//     let newPassword = guaranteedChars;
-//     const remainingLength = criteria.length - guaranteedChars.length;
-
-//     for (let i = 0; i < remainingLength; i++) {
-//       newPassword += availableChars[Math.floor(Math.random() * availableChars.length)];
-//     }
-
-//     // Shuffle the password to avoid predictable patterns
-//     const passwordArray = newPassword.split('');
-//     for (let i = passwordArray.length - 1; i > 0; i--) {
-//       const j = Math.floor(Math.random() * (i + 1));
-//       [passwordArray[i], passwordArray[j]] = [passwordArray[j], passwordArray[i]];
-//     }
-
-//     setPassword(passwordArray.join(''));
-//     setShowManualEntry(false);
-//   };
-
-//   const savePassword = () => {
-//     const passwordToSave = showManualEntry ? manualPassword : password;
-    
-//     if (!passwordToSave.trim()) {
-//       alert('Please generate or enter a password first!');
-//       return;
-//     }
-
-//     const accountName = selectedAccount === 'custom' ? customAccount : selectedAccount;
-    
-//     if (!accountName) {
-//       alert('Please select an account or enter a custom account name!');
-//       return;
-//     }
-
-//     // Check if password for this account already exists
-//     const existingIndex = savedPasswords.findIndex(entry => entry.account.toLowerCase() === accountName.toLowerCase());
-    
-//     if (existingIndex !== -1) {
-//       const confirmUpdate = window.confirm(`A password for ${accountName} already exists. Do you want to update it?`);
-//       if (!confirmUpdate) return;
-      
-//       // Update existing password
-//       const updatedPasswords = [...savedPasswords];
-//       updatedPasswords[existingIndex] = {
-//         ...updatedPasswords[existingIndex],
-//         password: passwordToSave,
-//         timestamp: new Date().toLocaleString(),
-//         updated: true
-//       };
-//       setSavedPasswords(updatedPasswords);
-//     } else {
-//       // Add new password
-//       const passwordEntry = {
-//         id: Date.now(),
-//         account: accountName,
-//         password: passwordToSave,
-//         timestamp: new Date().toLocaleString(),
-//         icon: predefinedAccounts.find(acc => acc.name === accountName)?.icon || '🔐'
-//       };
-//       setSavedPasswords([...savedPasswords, passwordEntry]);
-//     }
-
-//     setShowSaveSuccess(true);
-//     setShowAccountForm(false);
-//     setSelectedAccount('');
-//     setCustomAccount('');
-//     setManualPassword('');
-//     setTimeout(() => setShowSaveSuccess(false), 3000);
-//   };
-
-//   const copyToClipboard = (textToCopy) => {
-//     navigator.clipboard.writeText(textToCopy);
-//     alert('Password copied to clipboard!');
-//   };
-
-//   const deletePassword = (id) => {
-//     const confirmDelete = window.confirm('Are you sure you want to delete this password?');
-//     if (confirmDelete) {
-//       setSavedPasswords(savedPasswords.filter(entry => entry.id !== id));
-//     }
-//   };
-
-//   const handleCriteriaChange = (criterion) => {
-//     setCriteria(prev => ({
-//       ...prev,
-//       [criterion]: !prev[criterion]
-//     }));
-//   };
-
-//   const getPasswordStrength = () => {
-//     let strength = 0;
-//     if (criteria.uppercase) strength++;
-//     if (criteria.lowercase) strength++;
-//     if (criteria.numbers) strength++;
-//     if (criteria.special) strength++;
-    
-//     if (criteria.length >= 16) strength++;
-//     if (criteria.length >= 20) strength++;
-
-//     if (strength <= 2) return { level: 'Weak', color: '#ff4444' };
-//     if (strength <= 4) return { level: 'Medium', color: '#ffaa00' };
-//     return { level: 'Strong', color: '#44ff44' };
-//   };
-
-//   const strength = getPasswordStrength();
-
-//   return (
-//     <div className="auth-container">
-//       <div className="homepage-container">
-//         <div className="homepage-header">
-//           <h1>🔐 Password Manager</h1>
-//           <p>Generate secure passwords and manage your accounts</p>
-//         </div>
-
-//         <div className="homepage-content">
-//           {/* Password Generator Section */}
-//           <div className="section-card">
-//             <h2>🎲 Generate Password</h2>
-            
-//             <div className="password-criteria">
-//               <h3>Password Criteria</h3>
-//               <div className="criteria-grid">
-//                 <label className="criteria-item">
-//                   <input
-//                     type="checkbox"
-//                     checked={criteria.uppercase}
-//                     onChange={() => handleCriteriaChange('uppercase')}
-//                   />
-//                   <span>Uppercase Letters (A-Z)</span>
-//                 </label>
-                
-//                 <label className="criteria-item">
-//                   <input
-//                     type="checkbox"
-//                     checked={criteria.lowercase}
-//                     onChange={() => handleCriteriaChange('lowercase')}
-//                   />
-//                   <span>Lowercase Letters (a-z)</span>
-//                 </label>
-                
-//                 <label className="criteria-item">
-//                   <input
-//                     type="checkbox"
-//                     checked={criteria.numbers}
-//                     onChange={() => handleCriteriaChange('numbers')}
-//                   />
-//                   <span>Numbers (0-9)</span>
-//                 </label>
-                
-//                 <label className="criteria-item">
-//                   <input
-//                     type="checkbox"
-//                     checked={criteria.special}
-//                     onChange={() => handleCriteriaChange('special')}
-//                   />
-//                   <span>Special Characters (!@#$%)</span>
-//                 </label>
-//               </div>
-              
-//               <div className="length-selector">
-//                 <label>
-//                   Password Length: 
-//                   <input
-//                     type="range"
-//                     min="8"
-//                     max="32"
-//                     value={criteria.length}
-//                     onChange={(e) => setCriteria(prev => ({...prev, length: parseInt(e.target.value)}))}
-//                     className="length-slider"
-//                   />
-//                   <span className="length-value">{criteria.length}</span>
-//                 </label>
-//               </div>
-
-//               <div className="strength-indicator">
-//                 <span>Strength: </span>
-//                 <span style={{ color: strength.color, fontWeight: 'bold' }}>
-//                   {strength.level}
-//                 </span>
-//               </div>
-//             </div>
-
-//             <button 
-//               className="generate-btn"
-//               onClick={generatePassword}
-//               disabled={!criteria.uppercase && !criteria.lowercase && !criteria.numbers && !criteria.special}
-//             >
-//               🎲 Generate Password
-//             </button>
-
-//             <div className="password-display">
-//               <textarea
-//                 value={password}
-//                 onChange={(e) => setPassword(e.target.value)}
-//                 placeholder="Generated password will appear here..."
-//                 className="password-textarea"
-//                 rows="3"
-//               />
-//               {password && (
-//                 <button className="copy-btn" onClick={() => copyToClipboard(password)}>
-//                   📋 Copy
-//                 </button>
-//               )}
-//             </div>
-
-//             <div className="manual-entry-section">
-//               <button 
-//                 className="manual-entry-btn"
-//                 onClick={() => setShowManualEntry(!showManualEntry)}
-//               >
-//                 ✏️ {showManualEntry ? 'Hide Manual Entry' : 'Add Password Manually'}
-//               </button>
-              
-//               {showManualEntry && (
-//                 <div className="manual-entry-form">
-//                   <textarea
-//                     value={manualPassword}
-//                     onChange={(e) => setManualPassword(e.target.value)}
-//                     placeholder="Enter your password manually..."
-//                     className="password-textarea"
-//                     rows="3"
-//                   />
-//                   {manualPassword && (
-//                     <button className="copy-btn" onClick={() => copyToClipboard(manualPassword)}>
-//                       📋 Copy
-//                     </button>
-//                   )}
-//                 </div>
-//               )}
-//             </div>
-//           </div>
-
-//           {/* Save Password Section */}
-//           <div className="section-card">
-//             <h2>💾 Save Password</h2>
-            
-//             {!showAccountForm ? (
-//               <button 
-//                 className="save-btn"
-//                 onClick={() => setShowAccountForm(true)}
-//                 disabled={!password.trim() && !manualPassword.trim()}
-//               >
-//                 💾 Save Password for Account
-//               </button>
-//             ) : (
-//               <div className="account-selection">
-//                 <h4>Select Account</h4>
-//                 <div className="account-grid">
-//                   {predefinedAccounts.map((account) => (
-//                     <button
-//                       key={account.name}
-//                       className={`account-btn ${selectedAccount === account.name ? 'selected' : ''}`}
-//                       onClick={() => setSelectedAccount(account.name)}
-//                     >
-//                       <span className="account-icon">{account.icon}</span>
-//                       <span className="account-name">{account.name}</span>
-//                     </button>
-//                   ))}
-//                   <button
-//                     className={`account-btn custom-btn ${selectedAccount === 'custom' ? 'selected' : ''}`}
-//                     onClick={() => setSelectedAccount('custom')}
-//                   >
-//                     <span className="account-icon">➕</span>
-//                     <span className="account-name">Custom</span>
-//                   </button>
-//                 </div>
-
-//                 {selectedAccount === 'custom' && (
-//                   <input
-//                     type="text"
-//                     value={customAccount}
-//                     onChange={(e) => setCustomAccount(e.target.value)}
-//                     placeholder="Enter custom account name..."
-//                     className="custom-account-input"
-//                   />
-//                 )}
-
-//                 <div className="account-actions">
-//                   <button className="save-final-btn" onClick={savePassword}>
-//                     💾 Save Password
-//                   </button>
-//                   <button className="cancel-btn" onClick={() => setShowAccountForm(false)}>
-//                     ❌ Cancel
-//                   </button>
-//                 </div>
-//               </div>
-//             )}
-
-//             {showSaveSuccess && (
-//               <div className="success-message">
-//                 ✅ Password saved successfully!
-//               </div>
-//             )}
-//           </div>
-
-//           {/* Saved Passwords Section */}
-//           <div className="section-card">
-//             <div className="saved-passwords-header">
-//               <h2>📋 Saved Passwords ({savedPasswords.length})</h2>
-//               {savedPasswords.length > 0 && (
-//                 <button 
-//                   className="toggle-saved-btn"
-//                   onClick={() => setShowSavedPasswords(!showSavedPasswords)}
-//                 >
-//                   {showSavedPasswords ? '🙈 Hide' : '👁️ Show'} Saved Passwords
-//                 </button>
-//               )}
-//             </div>
-
-//             {showSavedPasswords && savedPasswords.length > 0 && (
-//               <div className="saved-list">
-//                 {savedPasswords.map((entry) => (
-//                   <div key={entry.id} className="saved-item">
-//                     <div className="saved-account">
-//                       <span className="saved-icon">{entry.icon}</span>
-//                       <span className="saved-account-name">{entry.account}</span>
-//                     </div>
-//                     <div className="saved-password-section">
-//                       <span className="saved-password">{'•'.repeat(entry.password.length)}</span>
-//                       <button 
-//                         className="copy-saved-btn"
-//                         onClick={() => copyToClipboard(entry.password)}
-//                         title="Copy password"
-//                       >
-//                         📋
-//                       </button>
-//                       <button 
-//                         className="delete-btn"
-//                         onClick={() => deletePassword(entry.id)}
-//                         title="Delete password"
-//                       >
-//                         🗑️
-//                       </button>
-//                     </div>
-//                     <div className="saved-time">
-//                       {entry.updated ? 'Updated: ' : 'Created: '}{entry.timestamp}
-//                     </div>
-//                   </div>
-//                 ))}
-//               </div>
-//             )}
-
-//             {savedPasswords.length === 0 && (
-//               <div className="no-passwords">
-//                 <p>No passwords saved yet. Generate and save your first password!</p>
-//               </div>
-//             )}
-//           </div>
-//         </div>
-
-//         <div className="navigation-links">
-//           <Link to="/login">🔑 Login</Link>
-//           <Link to="/signup">📝 Sign Up</Link>
-//         </div>
-//       </div>
-//     </div>
-//   );
-// };
-
-// export default Homepage;

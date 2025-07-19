@@ -103,6 +103,8 @@ const Signup = () => {
     confirmPassword: ''
   });
 
+  const [loading, setLoading] = useState(false);
+
   const handleChange = (e) => {
     setFormData({
       ...formData,
@@ -110,14 +112,45 @@ const Signup = () => {
     });
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
+
     if (formData.password !== formData.confirmPassword) {
-      alert('Passwords do not match!');
+      alert('❌ Passwords do not match!');
       return;
     }
-    console.log('Signup attempt:', formData);
-    alert('Signup functionality would be implemented here!');
+
+    setLoading(true);
+
+    try {
+      const res = await fetch('http://localhost:5000/api/signup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: formData.name,
+          email: formData.email,
+          password: formData.password
+        })
+      });
+
+      const data = await res.json();
+      if (res.ok) {
+        alert(`✅ ${data.message}`);
+        setFormData({
+          name: '',
+          email: '',
+          password: '',
+          confirmPassword: ''
+        });
+      } else {
+        alert(`⚠️ ${data.message}`);
+      }
+    } catch (err) {
+      console.error('Signup error:', err);
+      alert('❌ Something went wrong. Please try again.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -157,8 +190,11 @@ const Signup = () => {
             onChange={handleChange}
             required
           />
-          <button type="submit">Sign Up</button>
+          <button type="submit" disabled={loading}>
+            {loading ? 'Registering...' : 'Sign Up'}
+          </button>
         </form>
+
         <p>
           Already have an account? <Link to="/login">Login</Link>
         </p>

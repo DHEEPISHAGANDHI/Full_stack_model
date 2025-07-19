@@ -1,31 +1,14 @@
-// import React from 'react';
-// import './styles.css';
-
-// const Login = () => {
-//   return (
-//     <div className="auth-container">
-//       <div className="auth-box">
-//         <h2>Login</h2>
-//         <input type="email" placeholder="Email" />
-//         <input type="password" placeholder="Password" />
-//         <button>Login</button>
-//         <p>
-//           Don't have an account? <a href="/signup">Sign Up</a>
-//         </p>
-//       </div>
-//     </div>
-//   );
-// };
-
-// export default Login;
 import React, { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom'; // ✅ added useNavigate
 
 const Login = () => {
   const [formData, setFormData] = useState({
     email: '',
     password: ''
   });
+
+  const [loading, setLoading] = useState(false);
+  const navigate = useNavigate(); // ✅ navigation hook
 
   const handleChange = (e) => {
     setFormData({
@@ -34,10 +17,40 @@ const Login = () => {
     });
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    console.log('Login attempt:', formData);
-    alert('Login functionality would be implemented here!');
+    setLoading(true);
+
+    try {
+      const res = await fetch('http://localhost:5000/api/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(formData)
+      });
+
+      const data = await res.json();
+
+      if (res.ok) {
+        alert(`✅ ${data.message}`);
+        console.log('Logged in:', data.user);
+
+        // Optional: Store user in localStorage
+        localStorage.setItem('user', JSON.stringify(data.user));
+
+        // Clear form
+        setFormData({ email: '', password: '' });
+
+        // ✅ Redirect to homepage
+        navigate('/');
+      } else {
+        alert(`⚠️ ${data.message}`);
+      }
+    } catch (err) {
+      console.error('Login error:', err);
+      alert('❌ Login failed. Please try again.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -61,7 +74,9 @@ const Login = () => {
             onChange={handleChange}
             required
           />
-          <button type="submit">Login</button>
+          <button type="submit" disabled={loading}>
+            {loading ? 'Logging in...' : 'Login'}
+          </button>
         </form>
         <p>
           Don't have an account? <Link to="/signup">Sign up</Link>
